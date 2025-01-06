@@ -5,7 +5,6 @@ import nvidia.dali.types as types
 from nvidia.dali.pipeline import Pipeline
 from nvidia.dali.plugin.pytorch import DALIGenericIterator, LastBatchPolicy
 import decord
-from nvidia.dali.pipeline import pipeline_def
 
 
 class DALIWarper(object):
@@ -112,47 +111,59 @@ class ExternalInputCallable:
             video_data = self.get_frame_id_list(video_path, self.sequence_length)
         return video_data, np.int64([int(video_label)])
 
-@pipeline_def(enable_conditionals=True)
-def dali_pipeline(mode, source_params):
-    
-    short_side_size = source_params['short_side_size']
-    input_size = source_params['input_size']
-    mean = source_params['mean']
-    std = source_params['std']
+
+def dali_dataloader(data_root_path,
+                    data_csv_path,
+                    data_set,
+                    num_shots,
+                    dali_num_threads = 4,
+                    dali_py_num_workers = 8,
+                    batch_size = 32,
+                    input_size = 224,
+                    sequence_length = 16,
+                    use_rgb = False,
+                    mean = [0.48145466, 0.4578275, 0.40821073],
+                    std = [0.26862954, 0.26130258, 0.27577711],
+                    mode = "val",
+                    seed = 0):
 
     if mode == "train":
-        videos, labels = fn.external_source(
-            source = ExternalInputCallable(mode, source_params),
-            num_outputs = 2,
-            batch = False,
-            parallel = True,
-            dtype = [types.UINT8, types.INT64],
-            layout = ["FHWC", "C"]
-        )
-        videos = videos.gpu()
-        videos = fn.resize(videos, resize_shorter=short_side_size, antialias=True, 
-                            interp_type=types.INTERP_LINEAR, device="gpu")
-        videos = fn.random_resized_crop(videos, size=[input_size, input_size], num_attempts=50, 
-                                        random_area=[0.9, 1.0], device="gpu")
-        
-        brightness_contrast_probability = fn.random.coin_flip(dtype=types.BOOL, probability=0.8)
-        if brightness_contrast_probability:
-            videos = fn.brightness_contrast(videos, contrast=fn.random.uniform(range=(0.6, 1.4)),
-                                            brightness=fn.random.uniform(range=(-0.125, 0.125)), device="gpu")
-        saturation_probability = fn.random.coin_flip(dtype=types.BOOL, probability=0.8)
-        if saturation_probability:
-            videos = fn.saturation(videos, saturation=fn.random.uniform(range=[0.6, 1.4]), device="gpu")
-        hue_probability = fn.random.coin_flip(dtype=types.BOOL, probability=0.8)
-        if hue_probability:
-            videos = fn.hue(videos, hue=fn.random.uniform(range=[-0.2, 0.2]), device="gpu")
-        color_space_probability = fn.random.coin_flip(dtype=types.BOOL, probability=0.1)
-        if color_space_probability:
-            videos = fn.color_space_conversion(videos, image_type=types.RGB, output_type=types.BGR, device="gpu")
-        videos = fn.crop_mirror_normalize(videos, dtype=types.FLOAT, output_layout = "CFHW",
-                                        mean=[m*255.0 for m in mean], std=[m*255.0 for m in std], device="gpu")
-        labels = labels.gpu()
-        return videos, labels
+        txt_file_name = "{}_{}_{}.txt".format(data_set, mode, "fewshot{}".format(num_shots))
     else:
+        txt_file_name = "{}_{}.txt".format(data_set, mode)
+    file_list = []
+    with open(os.path.join(data_csv_path, data_set, txt_file_name), 'r') as file:
+        reader = file.readlines()
+        for line in reader:
+            offset_viedo_path, video_label = line.strip().split(',')
+            video_path = os.path.join(data_root_path, data_set, offset_viedo_path)
+            file_list.append([video_path, int(video_label)])
+
+    rank = int(os.getenv("RANK", 0))
+    local_rank = int(os.getenv("LOCAL_RANK", 0))
+    world_size = int(os.getenv("WORLD_SIZE", 1))
+
+    source_params = {
+        "num_shards": world_size,
+        "shard_id": rank,
+        "file_list": file_list,
+        "batch_size": batch_size,
+        "sequence_length": sequence_length,
+        "seed": seed + rank,
+        "use_rgb": use_rgb,
+    }
+
+    pipe = Pipeline(
+        batch_size = batch_size,
+        num_threads = dali_num_threads,
+        device_id = local_rank,
+        seed = seed + rank,
+        py_num_workers = dali_py_num_workers,
+        py_start_method = 'spawn',
+        prefetch_queue_depth = 1,
+    )
+
+    with pipe:
         videos, labels = fn.external_source(
             source = ExternalInputCallable(mode, source_params),
             num_outputs = 2,
@@ -168,74 +179,8 @@ def dali_pipeline(mode, source_params):
         videos = fn.crop_mirror_normalize(videos, dtype=types.FLOAT, output_layout="CFHW",
                                         mean = [m*255.0 for m in mean], std = [m*255.0 for m in std], device="gpu")
         labels = labels.gpu()
-        return videos, labels
-
-def dali_dataloader(data_root_path,
-                    data_csv_path,
-                    data_set,
-                    dali_num_threads = 4,
-                    dali_py_num_workers = 8,
-                    batch_size = 32,
-                    input_size = 224,
-                    short_side_size = 239,
-                    sequence_length = 16,
-                    use_rgb = False,
-                    mean = [0.48145466, 0.4578275, 0.40821073],
-                    std = [0.26862954, 0.26130258, 0.27577711],
-                    mode = "val",
-                    seed = 0):
-
-    name_map = {
-        'K400': "k400",
-        'K600': "k600",
-        'K700': "k700",
-        'SSV2': "ssv2",
-    }
-    if mode == "train":
-        txt_file_name = os.path.join(data_csv_path, name_map[data_set], "train.txt")
-    else:
-        txt_file_name = os.path.join(data_csv_path, name_map[data_set], "val.txt")
-    file_list = []
-    with open(txt_file_name, 'r') as file:
-        reader = file.readlines()
-        for line in reader:
-            _, offset_viedo_path, video_label, _, _, _ = line.strip().split(' ')
-            video_path = os.path.join(data_root_path, offset_viedo_path)
-            file_list.append([video_path, int(video_label)])
-
-
-    rank = int(os.getenv("RANK", 0))
-    local_rank = int(os.getenv("LOCAL_RANK", 0))
-    world_size = int(os.getenv("WORLD_SIZE", 1))
-
-    source_params = {
-        "num_shards": world_size,
-        "shard_id": rank,
-        "file_list": file_list,
-        "batch_size": batch_size,
-        "sequence_length": sequence_length,
-        "seed": seed + rank,
-        "use_rgb": use_rgb,
-        "input_size": input_size,
-        "short_side_size": short_side_size,
-        "mean": mean,
-        "std": std,
-    }
-
-
-    pipe = dali_pipeline(
-        batch_size = batch_size,
-        num_threads = dali_num_threads,
-        device_id = local_rank,
-        seed = seed + rank,
-        py_num_workers = dali_py_num_workers,
-        py_start_method = 'spawn',
-        prefetch_queue_depth = 1,
-        mode = mode,
-        source_params = source_params
-    )
+        pipe.set_outputs(videos, labels)
     pipe.build()
-
 
     dataloader = DALIWarper(
         dali_iter = DALIGenericIterator(pipelines=pipe,

@@ -2,50 +2,54 @@
 
 ## 🎯 Video Benchmark
 
-- [√]  Video Action Recognition (Action Classification)
+- [x] Video Action Recognition (Action Classification)
 
-- [ ]  Video Temporal Action Localization (Temporal Action Detection)
+- [ ] Video Temporal Action Localization (Temporal Action Detection)
 
-- [ ]  Video Object Tracking
+- [ ] Video Object Tracking
 
-- [ ]  Video Point Tracking
+- [ ] Video Point Tracking
 
-- [ ]  Video Depth Estimation
+- [ ] Video Depth Estimation
 
-- [ ]  Video Camera Pose Estimation
+- [ ] Video Camera Pose Estimation
 
-- [ ]  Video Instance Segmentation
+- [ ] Video Instance Segmentation
 
-- [ ]  Video Retrieval Text-To-Video (T2V)
+- [ ] Video Retrieval Text-To-Video (T2V)
 
-- [ ]  Video Retrieval Video-To-Text (V2T)
+- [ ] Video Retrieval Video-To-Text (V2T)
 
-- [ ]  Video Temporal Grounding
+- [ ] Video Temporal Grounding
 
-- [ ]  Video Question-Answering
+- [ ] Video Question-Answering
 
 ## 📑 SOTA Video Foundation Models
 
-- [√]  [V-JEPA: Video Joint Embedding Predictive Architecture](https://ai.meta.com/research/publications/revisiting-feature-prediction-for-learning-visual-representations-from-video/)
+- [x] [V-JEPA: Video Joint Embedding Predictive Architecture](https://ai.meta.com/research/publications/revisiting-feature-prediction-for-learning-visual-representations-from-video/)
 
-- [√]  [InternVideo2: Scaling Foundation Models for Multimodal Video Understanding](https://arxiv.org/abs/2403.15377)
+- [x] [InternVideo2: Scaling Foundation Models for Multimodal Video Understanding](https://arxiv.org/abs/2403.15377)
 
-- [√]  [InternVideo: General Video Foundation Models via Generative and Discriminative Learning](https://arxiv.org/pdf/2212.03191)
+- [x] [InternVideo: General Video Foundation Models via Generative and Discriminative Learning](https://arxiv.org/pdf/2212.03191)
 
-- [√]  [Unmasked Teacher: Towards Training-Efficient Video Foundation Models](https://arxiv.org/abs/2303.16058)
+- [x] [Unmasked Teacher: Towards Training-Efficient Video Foundation Models](https://arxiv.org/abs/2303.16058)
 
-- [√]  [VideoMAE V2: Scaling Video Masked Autoencoders with Dual Masking](https://arxiv.org/abs/2303.16727)
+- [x] [VideoMAE V2: Scaling Video Masked Autoencoders with Dual Masking](https://arxiv.org/abs/2303.16727)
 
-- [√]  [VideoMAE: Masked Autoencoders are Data-Efficient Learners for Self-Supervised Video Pre-Training](https://arxiv.org/abs/2203.12602)
+- [x] [VideoMAE: Masked Autoencoders are Data-Efficient Learners for Self-Supervised Video Pre-Training](https://arxiv.org/abs/2203.12602)
 
-- [√]  [InternVid: A Large-scale Video-Text Dataset for Multimodal Understanding and Generation](https://arxiv.org/pdf/2307.06942)
+- [x] [InternVid: A Large-scale Video-Text Dataset for Multimodal Understanding and Generation](https://arxiv.org/pdf/2307.06942)
 
-- [ ]  [VideoPrism: A Foundational Visual Encoder for Video Understanding](https://arxiv.org/abs/2402.13217)
+- [ ] [VideoPrism: A Foundational Visual Encoder for Video Understanding](https://arxiv.org/abs/2402.13217)
 
-- [ ]  [Scaling 4D Representations](https://arxiv.org/abs/2412.15212)
+- [ ] [Scaling 4D Representations](https://arxiv.org/abs/2412.15212)
 
-- [ ]  [OmniVec2 - A Novel Transformer based Network for Large Scale Multimodal and Multitask Learning](https://openaccess.thecvf.com/content/CVPR2024/papers/Srivastava_OmniVec2_-_A_Novel_Transformer_based_Network_for_Large_Scale_CVPR_2024_paper.pdf)
+- [ ] [OmniVec2 - A Novel Transformer based Network for Large Scale Multimodal and Multitask Learning](https://openaccess.thecvf.com/content/CVPR2024/papers/Srivastava_OmniVec2_-_A_Novel_Transformer_based_Network_for_Large_Scale_CVPR_2024_paper.pdf)
 
+
+## 👏 MODEL_ZOO
+
+We provide the sota foundation model weights in [MODEL_ZOO.md](misc/MODEL_ZOO.md).
 
 ## 📊 Video Evaluation Method
 
@@ -131,7 +135,9 @@ Abbreviations used: pt (pretrain), ppt (post-pretrain), ft (finetune).
 | scan Learning rate      | 10<sup>-6</sup>, 10<sup>-4</sup>, 10<sup>-2</sup>, 1, 10<sup>2</sup>, 10<sup>4</sup>, 10<sup>6</sup> |
 | spaced steps            | binary search          |
 | num_step                | 8                      |
-| batch size              | 128                    |
+| batch size              | 32                     |
+| train class few-shot nums | 10                   |
+| val class few-shot nums   | half                 |
 | input resolution        | 224×224                |
 | mean                    | 0.485, 0.456, 0.406    |
 | std                     | 0.229, 0.224, 0.225    |
@@ -150,7 +156,7 @@ Abbreviations used: pt (pretrain), ppt (post-pretrain), ft (finetune).
 | min Learning rate       | 1e-7                   |
 | warmup epoch            | 5                      |
 | start Learning rate     | 0.0                    |
-| batch size              | 128                    |
+| batch size              | 192                    |
 | short side size         | 256                    |
 | input resolution        | 224×224                |
 | optimizer               | AdamW                  |
@@ -167,7 +173,7 @@ Abbreviations used: pt (pretrain), ppt (post-pretrain), ft (finetune).
 | saturation              | 0.8 probability: factor in [0.6, 1.4]     |
 | contrast                | 0.8 probability: factor in [0.6, 1.4]     |
 | hue                     | 0.8 probability: delta in [-0.2, 0.2]     |
-| color space conversion  | 0.1 probability: RGB to Gray              |
+| color space conversion  | 0.1 probability: RGB to BGR               |
 
 * This information is referenced from the paper [Scaling 4D Representations](https://arxiv.org/pdf/2412.15212).
 
@@ -207,7 +213,7 @@ If you find this repository useful, please use the following BibTeX entry for ci
 
 ## 👀 Acknowledgement
 
-This repository is built based on [V-SWIFT](https://github.com/deepglint/V-SWIFT), [VideoMAE](https://github.com/MCG-NJU/VideoMAE), [VideoMAEv2](https://github.com/OpenGVLab/VideoMAEv2), [jepa](https://github.com/facebookresearch/jepa), [unmasked_teacher](https://github.com/OpenGVLab/unmasked_teacher) and [InternVideo](https://github.com/OpenGVLab/InternVideo) repository.
+This repository is built based on [V-SWIFT](https://github.com/deepglint/V-SWIFT), [VideoMAE](https://github.com/MCG-NJU/VideoMAE), [VideoMAEv2](https://github.com/OpenGVLab/VideoMAEv2), [jepa](https://github.com/facebookresearch/jepa), [unmasked_teacher](https://github.com/OpenGVLab/unmasked_teacher), [CLIP_benchmark](https://github.com/LAION-AI/CLIP_benchmark), [vitookit](https://github.com/erow/vitookit), [BlackVIP](https://github.com/changdaeoh/BlackVIP), [open_clip](https://github.com/mlfoundations/open_clip) and [InternVideo](https://github.com/OpenGVLab/InternVideo) repository.
 
 
 
