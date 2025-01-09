@@ -183,26 +183,24 @@ def dali_dataloader(data_root_path,
                     mean = [0.48145466, 0.4578275, 0.40821073],
                     std = [0.26862954, 0.26130258, 0.27577711],
                     mode = "val",
+                    num_shots = None,
                     seed = 0):
 
-    name_map = {
-        'K400': "k400",
-        'K600': "k600",
-        'K700': "k700",
-        'SSV2': "ssv2",
-    }
-    if mode == "train":
-        txt_file_name = os.path.join(data_csv_path, name_map[data_set], "train.txt")
+    if num_shots is not None:
+        if mode == "train":
+            txt_file_name = "{}_{}_{}.txt".format(data_set, mode, "fewshot{}".format(num_shots))
+        else:
+            txt_file_name = "{}_{}.txt".format(data_set, mode)
+        file_list = []
+        with open(os.path.join(data_csv_path, data_set, txt_file_name), 'r') as file:
+            reader = file.readlines()
+            for line in reader:
+                offset_viedo_path, video_label = line.strip().split(',')
+                video_path = os.path.join(data_root_path, data_set, offset_viedo_path)
+                file_list.append([video_path, int(video_label)])
     else:
-        txt_file_name = os.path.join(data_csv_path, name_map[data_set], "val.txt")
-    file_list = []
-    with open(txt_file_name, 'r') as file:
-        reader = file.readlines()
-        for line in reader:
-            _, offset_viedo_path, video_label, _, _, _ = line.strip().split(' ')
-            video_path = os.path.join(data_root_path, offset_viedo_path)
-            file_list.append([video_path, int(video_label)])
-
+        raise NotImplementedError("This function is not implemented yet")
+            
 
     rank = int(os.getenv("RANK", 0))
     local_rank = int(os.getenv("LOCAL_RANK", 0))

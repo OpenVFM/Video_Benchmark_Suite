@@ -23,7 +23,9 @@ from timm.utils import accuracy
 from torch import inf
 import math
 from torch.nn.utils import clip_grad_norm_
-
+if os.getenv('FLASH') == '1':
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    
 
 class CrossAttention(nn.Module):
     def __init__(
@@ -53,6 +55,7 @@ class CrossAttention(nn.Module):
             self.k_bias = None
             self.v_bias = None
         
+        self.attn_drop_value = attn_drop
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(all_head_dim, out_dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -69,21 +72,30 @@ class CrossAttention(nn.Module):
             v_bias = self.v_bias
         
         q = F.linear(input=x, weight=self.q.weight, bias=q_bias)
-        q = q.reshape(B, N, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)  # (B, N_head, N_q, dim)
-        
         k = F.linear(input=k, weight=self.k.weight, bias=k_bias)
-        k = k.reshape(B, N_k, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
-        
         v = F.linear(input=v, weight=self.v.weight, bias=v_bias)
-        v = v.reshape(B, N_v, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
+
+        if os.getenv('FLASH') == '1':
+            q = q.reshape(B, N, 1, self.num_heads, -1).permute(2, 0, 1, 3, 4).squeeze(0)  # (B, N_q, N_head, dim)
+            k = k.reshape(B, N_k, 1, self.num_heads, -1).permute(2, 0, 1, 3, 4).squeeze(0)
+            v = v.reshape(B, N_v, 1, self.num_heads, -1).permute(2, 0, 1, 3, 4).squeeze(0)
+            
+            x = flash_attn_func(q, k, v, 
+                                dropout_p=self.attn_drop_value, 
+                                softmax_scale=self.scale, 
+                                causal=False)
+            x = x.reshape(B, N, -1)
+        else:
+            q = q.reshape(B, N, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)  # (B, N_head, N_q, dim)
+            k = k.reshape(B, N_k, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
+            v = v.reshape(B, N_v, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
         
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))  # (B, N_head, N_q, N_k)
+            q = q * self.scale
+            attn = (q @ k.transpose(-2, -1))  # (B, N_head, N_q, N_k)
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
         
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-        
-        x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
         x = self.proj(x)
         x = self.proj_drop(x)
         
@@ -185,14 +197,8 @@ def cosine_scheduler(base_value,
 
 
 def train_AdamW(args,
-                lr, ap_model, cur_device,
+                lr, cur_ap_model, cur_device,
                 forward_base_model, data_loader_train, data_loader_val):
-
-    cur_ap_model = ap_model.to(cur_device)
-    cur_ap_model = torch.nn.parallel.DistributedDataParallel(cur_ap_model, 
-                                                          device_ids=[args.local_rank])
-    cur_ap_model.train()
-
 
     optimizer = torch.optim.AdamW(
         cur_ap_model.parameters(),
@@ -270,20 +276,21 @@ def train_AdamW(args,
         print("Averaged stats:", metric_logger)
 
         # epoch eval
-        test_stats = validation_one_epoch(args, cur_ap_model, device, forward_base_model, data_loader_val)
+        if epoch % args.eval_freq == 0 or epoch == args.default_epoch - 1:
+            test_stats = validation_one_epoch(args, cur_ap_model, device, forward_base_model, data_loader_val)
 
-        if args.global_rank == 0:
-            head_info = "{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\n".format("dataset", "seed", 
-                                                                                    "default_epoch", "default_warmup_epochs",
-                                                                                    "default_weight_decay", "default_min_lr",
-                                                                                    "lr", "cur_epoch", "acc_top1", "acc_top5")
-            cur_info = "{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\n".format(args.data_set, args.seed, 
-                                                                                args.default_epoch, args.default_warmup_epochs, 
-                                                                                args.default_weight_decay, args.default_min_lr, 
-                                                                                lr, epoch, test_stats["acc1"], test_stats["acc5"])
-            with open(args.report_txt_path, "a+") as writer:
-                writer.write(head_info)
-                writer.write(cur_info)
+            if args.global_rank == 0:
+                head_info = "{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\n".format("dataset", "seed", 
+                                                                                        "default_epoch", "default_warmup_epochs",
+                                                                                        "default_weight_decay", "default_min_lr",
+                                                                                        "lr", "cur_epoch", "acc_top1", "acc_top5")
+                cur_info = "{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\n".format(args.data_set, args.seed, 
+                                                                                    args.default_epoch, args.default_warmup_epochs, 
+                                                                                    args.default_weight_decay, args.default_min_lr, 
+                                                                                    lr, epoch, test_stats["acc1"], test_stats["acc5"])
+                with open(args.report_txt_path, "a+") as writer:
+                    writer.write(head_info)
+                    writer.write(cur_info)
 
         data_loader_train.reset()
         data_loader_val.reset()
@@ -327,11 +334,38 @@ def validation_one_epoch(args,
     return {k: meter.global_avg for k, meter in metric_logger_val.meters.items()}
 
 
-def find_peak(args, lr, ap_model, device,
-            forward_base_model, data_loader_train, data_loader_val):
+def find_peak(args, lr, cur_device,
+            base_model, data_loader_train, data_loader_val):
 
-    acc_top1, acc_top5 = train_AdamW(args, lr, ap_model, device,
-                                    forward_base_model, data_loader_train, data_loader_val)
+    # base model export feature
+    base_model = load_finetune_checkpoint(args, base_model)
+    base_model.to(cur_device)
+    # for name, p in base_model.named_parameters():
+    #     p.requires_grad = False
+    # base_model = torch.nn.DataParallel(base_model, device_ids=[args.local_rank])
+    base_model.eval()
+
+    # attentive_probing
+    attentive_probe_model = AttentionPoolingBlock(
+                                        dim=args.embedding_size, 
+                                        num_heads=args.default_attentive_head, 
+                                        qkv_bias=True, 
+                                        qk_scale=None,
+                                        drop=0.0, 
+                                        attn_drop=0.0, 
+                                        drop_path=0.0, 
+                                        norm_layer=partial(nn.LayerNorm, eps=1e-5), 
+                                        out_dim=args.default_attentive_out_dim)
+    ap_model = CustomModel(attentive_probe_model,
+                        attentive_dim=args.default_attentive_out_dim,
+                        num_classes=args.num_classes)
+    print("create model end")
+    cur_ap_model = ap_model.to(cur_device)
+    cur_ap_model = torch.nn.parallel.DistributedDataParallel(cur_ap_model, device_ids=[args.local_rank])
+    cur_ap_model.train()
+
+    acc_top1, acc_top5 = train_AdamW(args, lr, cur_ap_model, cur_device,
+                                    base_model, data_loader_train, data_loader_val)
     return acc_top1, acc_top5
 
 
@@ -361,7 +395,7 @@ def get_args():
     parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float)
     parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float)
     parser.add_argument('--dali_num_threads', default=8, type=int)
-    parser.add_argument('--dali_py_num_workers', default=14, type=int)
+    parser.add_argument('--dali_py_num_workers', default=12, type=int)
     parser.add_argument('--short_side_size', default=256, type=int)
     parser.add_argument('--use_rgb', default=False)
     parser.add_argument('--smoothing', default=0.1, type=float)
@@ -376,13 +410,82 @@ def get_args():
     parser.add_argument('--default_lr_list', default=[1e-3, 3e-4, 1e-4], type=float)
     parser.add_argument('--default_start_warmup_value', default=0.0, type=float)
     parser.add_argument('--clip_grad', default=5.0, type=float)
-    parser.add_argument('--print_freq', default=20, type=int)
+    parser.add_argument('--print_freq', default=10, type=int)
+    parser.add_argument('--eval_freq', default=4, type=int)
     return parser.parse_args()
 
 
 def mkdir_os(path):
     if not os.path.exists(path):
         os.makedirs(path)
+
+def get_model(args):
+    print("create model start")
+    if args.model_name == "umt":
+        from timm.models import create_model
+        import video_models.umt
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features_attentive_probe
+    elif args.model_name == "videomae_v1":
+        from timm.models import create_model
+        import video_models.videomae_v1
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features_attentive_probe
+    elif args.model_name == "videomae_v2":
+        from timm.models import create_model
+        import video_models.videomae_v2
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features_attentive_probe
+    elif args.model_name == "vswift":
+        from timm.models import create_model
+        import video_models.vswift
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features_attentive_probe
+    elif args.model_name == "viclip":
+        from timm.models import create_model
+        import video_models.viclip
+        base_model = create_model(
+            args.model,
+            input_resolution=args.input_size,
+            pretrained=False,
+            kernel_size=args.tubelet_size,
+            center=True, 
+            num_frames=args.num_frames,
+            drop_path=0.0, 
+            checkpoint_num=0,
+            dropout=0.0)
+        base_model.forward= base_model.forward_features_attentive_probe
+    else:
+        raise RuntimeError
+    return base_model
 
 
 if __name__ == '__main__':
@@ -452,15 +555,16 @@ if __name__ == '__main__':
                                         mean=args.mean,
                                         std=args.std,
                                         mode="train",
-                                        seed=args.seed)
+                                        seed=args.seed,
+                                        num_shots=args.num_shots)
     args.total_batch_size = args.world_size * args.batch_size
     args.num_train_steps_per_epoch = len(data_loader_train)
     
     data_loader_val = dali_dataloader(args.data_root_path,
                                         args.data_csv_path,
                                         args.data_set,
-                                        dali_num_threads=args.dali_num_threads,
-                                        dali_py_num_workers=args.dali_py_num_workers,
+                                        dali_num_threads=4,
+                                        dali_py_num_workers=8,
                                         batch_size=args.batch_size,
                                         input_size=args.input_size,
                                         short_side_size=args.short_side_size,
@@ -469,106 +573,18 @@ if __name__ == '__main__':
                                         mean=args.mean,
                                         std=args.std,
                                         mode="val",
-                                        seed=1024)
+                                        seed=1024,
+                                        num_shots=args.num_shots)
     args.num_val_steps_per_epoch = len(data_loader_val)
     print("create data loader end")
 
-
-    print("create model start")
-    # base model export feature
-    if args.model_name == "umt":
-        from timm.models import create_model
-        import video_models.umt
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features_attentive_probe
-    elif args.model_name == "videomae_v1":
-        from timm.models import create_model
-        import video_models.videomae_v1
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features_attentive_probe
-    elif args.model_name == "videomae_v2":
-        from timm.models import create_model
-        import video_models.videomae_v2
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features_attentive_probe
-    elif args.model_name == "vswift":
-        from timm.models import create_model
-        import video_models.vswift
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features_attentive_probe
-    elif args.model_name == "viclip":
-        from timm.models import create_model
-        import video_models.viclip
-        base_model = create_model(
-            args.model,
-            input_resolution=args.input_size,
-            pretrained=False,
-            kernel_size=args.tubelet_size,
-            center=True, 
-            num_frames=args.num_frames,
-            drop_path=0.0, 
-            checkpoint_num=0,
-            dropout=0.0)
-        base_model.forward= base_model.forward_features_attentive_probe
-    else:
-        raise RuntimeError
-    base_model = load_finetune_checkpoint(args, base_model)
-    base_model.to(device)
-    for name, p in base_model.named_parameters():
-        p.requires_grad = False
-    forward_base_model = torch.nn.DataParallel(base_model, device_ids=[args.local_rank])
-    forward_base_model.eval()
-
-
-    # attentive_probing
-    attentive_probe_model = AttentionPoolingBlock(
-                                        dim=args.embedding_size, 
-                                        num_heads=args.default_attentive_head, 
-                                        qkv_bias=True, 
-                                        qk_scale=None,
-                                        drop=0.0, 
-                                        attn_drop=0.0, 
-                                        drop_path=0.0, 
-                                        norm_layer=partial(nn.LayerNorm, eps=1e-5), 
-                                        out_dim=args.default_attentive_out_dim)
-    ap_model = CustomModel(attentive_probe_model,
-                        attentive_dim=args.default_attentive_out_dim,
-                        num_classes=args.num_classes)
-    print("create model end")
-
-
     best_lr, max_acc_top1, max_acc_top5 = 0, 0, 0
     for lr in args.default_lr_list:
-        acc_top1, acc_top5 = find_peak(args, lr, ap_model, device,
-                                       forward_base_model, data_loader_train, data_loader_val)
+        
+        base_model = get_model(args)
+
+        acc_top1, acc_top5 = find_peak(args, lr, device,
+                                       base_model, data_loader_train, data_loader_val)
         if max_acc_top1 < acc_top1:
             best_lr, max_acc_top1, max_acc_top5 = lr, acc_top1, acc_top5
 
