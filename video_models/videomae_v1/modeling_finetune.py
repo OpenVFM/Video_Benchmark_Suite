@@ -440,6 +440,12 @@ class VisionTransformer(nn.Module):
         self.head = nn.Linear(
             self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
+    def forward(self, x):
+        x = self.forward_features(x)
+        x = self.head_dropout(x)
+        x = self.head(x)
+        return x
+    
     def forward_features(self, x):
         B = x.size(0)
 
@@ -461,7 +467,7 @@ class VisionTransformer(nn.Module):
         else:
             return self.norm(x[:, 0])
 
-    def forward_features_ver2(self, x):
+    def forward_features_attentive_probe(self, x):
         B = x.size(0)
 
         x = self.patch_embed(x)
@@ -476,12 +482,6 @@ class VisionTransformer(nn.Module):
                 x = cp.checkpoint(blk, x)
             else:
                 x = blk(x)
-        return x
-
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.head_dropout(x)
-        x = self.head(x)
         return x
 
 

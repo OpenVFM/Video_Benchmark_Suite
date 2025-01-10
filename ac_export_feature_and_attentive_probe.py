@@ -274,11 +274,12 @@ def train_AdamW(args,
             
         metric_logger.synchronize_between_processes()
         print("Averaged stats:", metric_logger)
+        data_loader_train.reset()
 
         # epoch eval
         if epoch % args.eval_freq == 0 or epoch == args.default_epoch - 1:
             test_stats = validation_one_epoch(args, cur_ap_model, device, forward_base_model, data_loader_val)
-
+            data_loader_val.reset()
             if args.global_rank == 0:
                 head_info = "{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\t{:<10}\n".format("dataset", "seed", 
                                                                                         "default_epoch", "default_warmup_epochs",
@@ -291,10 +292,6 @@ def train_AdamW(args,
                 with open(args.report_txt_path, "a+") as writer:
                     writer.write(head_info)
                     writer.write(cur_info)
-
-        data_loader_train.reset()
-        data_loader_val.reset()
-        
     return test_stats["acc1"], test_stats["acc5"]
 
 
@@ -340,9 +337,9 @@ def find_peak(args, lr, cur_device,
     # base model export feature
     base_model = load_finetune_checkpoint(args, base_model)
     base_model.to(cur_device)
-    # for name, p in base_model.named_parameters():
-    #     p.requires_grad = False
-    # base_model = torch.nn.DataParallel(base_model, device_ids=[args.local_rank])
+    for name, p in base_model.named_parameters():
+        p.requires_grad = False
+    base_model = torch.nn.DataParallel(base_model, device_ids=[args.local_rank])
     base_model.eval()
 
     # attentive_probing
@@ -395,7 +392,7 @@ def get_args():
     parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float)
     parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float)
     parser.add_argument('--dali_num_threads', default=8, type=int)
-    parser.add_argument('--dali_py_num_workers', default=12, type=int)
+    parser.add_argument('--dali_py_num_workers', default=14, type=int)
     parser.add_argument('--short_side_size', default=256, type=int)
     parser.add_argument('--use_rgb', default=False)
     parser.add_argument('--smoothing', default=0.1, type=float)
@@ -411,7 +408,7 @@ def get_args():
     parser.add_argument('--default_start_warmup_value', default=0.0, type=float)
     parser.add_argument('--clip_grad', default=5.0, type=float)
     parser.add_argument('--print_freq', default=10, type=int)
-    parser.add_argument('--eval_freq', default=4, type=int)
+    parser.add_argument('--eval_freq', default=8, type=int)
     return parser.parse_args()
 
 

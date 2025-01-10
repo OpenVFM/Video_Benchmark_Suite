@@ -452,6 +452,27 @@ class VisionTransformer(nn.Module):
             return self.fc_norm(x.mean(1))
         else:
             return self.norm(x[:, 0])
+    
+    def forward_features_attentive_probe(self, x):
+        B = x.size(0)
+
+        x = self.patch_embed(x)
+
+        # if self.pos_embed is not None:
+        #     x = x + self.pos_embed.expand(B, -1, -1)
+        
+        # N,D,L -> N,L,D
+        x = x.flatten(2).transpose(1, 2)
+        x = x + self.pos_embed
+
+        x = self.pos_drop(x)
+
+        for blk in self.blocks:
+            if self.with_cp:
+                x = cp.checkpoint(blk, x)
+            else:
+                x = blk(x)
+        return x
 
     def forward(self, x):
         B = x.size(0)

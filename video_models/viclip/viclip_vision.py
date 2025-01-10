@@ -158,7 +158,6 @@ class VisionTransformer(nn.Module):
 
         return x
 
-
     def forward_features(self, x, masking_prob=0.0):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         B, C, T, H, W = x.shape
@@ -197,7 +196,38 @@ class VisionTransformer(nn.Module):
             x = x.permute(1, 0, 2)  #NBD -> BND
 
         return x
-    
+
+    def forward_features_attentive_probe(self, x, masking_prob=0.0):
+        x = self.conv1(x)  # shape = [*, width, grid, grid]
+        B, C, T, H, W = x.shape
+        x = x.permute(0, 2, 3, 4, 1).reshape(B * T, H * W, C)
+
+        x = torch.cat([self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = x + self.positional_embedding.to(x.dtype)
+
+        # temporal pos
+        cls_tokens = x[:B, :1, :]
+        x = x[:, 1:]
+        x = rearrange(x, '(b t) n m -> (b n) t m', b=B, t=T)
+        if hasattr(self, 'temporal_positional_embedding'):
+            if x.size(1) == 1:
+                # This is a workaround for unused parameter issue
+                x = x + self.temporal_positional_embedding.mean(1)
+            else:
+                x = x + self.temporal_positional_embedding
+        x = rearrange(x, '(b n) t m -> b (n t) m', b=B, t=T)
+
+        if masking_prob > 0.0:
+            x = self.mask_tokens(x, masking_prob)
+
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = self.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  #BND -> NBD
+        x = self.transformer(x)
+        return x
+
 
 @register_model
 def clip_joint_b16(

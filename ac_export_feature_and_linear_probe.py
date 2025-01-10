@@ -126,6 +126,75 @@ def mkdir_os(path):
         os.makedirs(path)
 
 
+def get_model(args):
+    print("create model start")
+    if args.model_name == "umt":
+        from timm.models import create_model
+        import video_models.umt
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features
+    elif args.model_name == "videomae_v1":
+        from timm.models import create_model
+        import video_models.videomae_v1
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features
+    elif args.model_name == "videomae_v2":
+        from timm.models import create_model
+        import video_models.videomae_v2
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features
+    elif args.model_name == "vswift":
+        from timm.models import create_model
+        import video_models.vswift
+        base_model = create_model(
+            args.model,
+            img_size=args.input_size,
+            pretrained=False,
+            num_classes=args.num_classes,
+            all_frames=args.num_frames,
+            tubelet_size=args.tubelet_size,
+            use_mean_pooling=True)
+        base_model.forward= base_model.forward_features
+    elif args.model_name == "viclip":
+        from timm.models import create_model
+        import video_models.viclip
+        base_model = create_model(
+            args.model,
+            input_resolution=args.input_size,
+            pretrained=False,
+            kernel_size=args.tubelet_size,
+            center=True, 
+            num_frames=args.num_frames,
+            drop_path=0.0, 
+            checkpoint_num=0,
+            dropout=0.0)
+        base_model.forward= base_model.forward_features
+    else:
+        raise RuntimeError
+    return base_model
+
+
 if __name__ == '__main__':
     args = get_args()
 
@@ -216,77 +285,13 @@ if __name__ == '__main__':
     print("create data loader end")
 
 
-    print("create model start")
-    # base model export feature
-    if args.model_name == "umt":
-        from timm.models import create_model
-        import video_models.umt
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features
-    elif args.model_name == "videomae_v1":
-        from timm.models import create_model
-        import video_models.videomae_v1
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features
-    elif args.model_name == "videomae_v2":
-        from timm.models import create_model
-        import video_models.videomae_v2
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features
-    elif args.model_name == "vswift":
-        from timm.models import create_model
-        import video_models.vswift
-        base_model = create_model(
-            args.model,
-            img_size=args.input_size,
-            pretrained=False,
-            num_classes=args.num_classes,
-            all_frames=args.num_frames,
-            tubelet_size=args.tubelet_size,
-            use_mean_pooling=True)
-        base_model.forward= base_model.forward_features
-    elif args.model_name == "viclip":
-        from timm.models import create_model
-        import video_models.viclip
-        base_model = create_model(
-            args.model,
-            input_resolution=args.input_size,
-            pretrained=False,
-            kernel_size=args.tubelet_size,
-            center=True, 
-            num_frames=args.num_frames,
-            drop_path=0.0, 
-            checkpoint_num=0,
-            dropout=0.0)
-        base_model.forward= base_model.forward_features
-    else:
-        raise RuntimeError
+    base_model = get_model(args)
     base_model = load_finetune_checkpoint(args, base_model)
     base_model.to(device)
     forward_base_model = torch.nn.DataParallel(base_model, device_ids=[args.local_rank])
 
 
+    # base model export feature
     print("export feature start")
     print("export train feature")
     with torch.no_grad():

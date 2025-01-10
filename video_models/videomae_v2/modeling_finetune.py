@@ -461,7 +461,7 @@ class VisionTransformer(nn.Module):
         else:
             return self.norm(x[:, 0])
 
-    def forward_features_ver2(self, x):
+    def forward_features_attentive_probe(self, x):
         B = x.size(0)
 
         x = self.patch_embed(x)
