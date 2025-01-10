@@ -205,7 +205,7 @@ If you find this repository useful, please use the following BibTeX entry for ci
 @misc{deepglint_videobenchmark2025,
       title={Video Benchmark Suite: Rapid Evaluation of Video Foundation Models}, 
       url={ https://github.com/deepglint/Video_Benchmark_Suite },
-      author={Yang, Ninghua},
+      author={Yang, Ninghua, Feng, Ziyong},
       year={2025}
 }
 ```
